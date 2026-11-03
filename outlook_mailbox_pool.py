@@ -396,6 +396,12 @@ class OutlookTaskRuntime:
                 "closed": self._closed,
             }
 
+    def on_success(self, email: str) -> None:
+        pass
+
+    def on_failure(self, email: str, reason: str = "") -> None:
+        pass
+
     def close(self) -> None:
         with self._lock:
             self._closed = True
@@ -427,9 +433,20 @@ def rotate_outlook_refresh_token(path, email, previous, rotated):
 
 
 def create_outlook_task_runtime(
-    path: Union[str, os.PathLike], log_callback=None, cancelled_exception=None
-) -> OutlookTaskRuntime:
-    target, _normalized, accounts = _read_validated_pool(path)
+    path_or_config: Union[str, os.PathLike, dict],
+    log_callback=None,
+    cancelled_exception=None,
+    config: Optional[dict] = None,
+) -> Union[OutlookTaskRuntime, Any]:
+    cfg = path_or_config if isinstance(path_or_config, dict) else (config if isinstance(config, dict) else {})
+    is_api = cfg.get("outlook_source") == "api" or (bool(cfg.get("outlook_api_base")) and cfg.get("outlook_source") != "file")
+    if is_api:
+        from outlook_api import create_outlook_api_task_runtime
+        return create_outlook_api_task_runtime(
+            cfg, log_callback=log_callback, cancelled_exception=cancelled_exception
+        )
+    target_path = path_or_config if not isinstance(path_or_config, dict) else cfg.get("outlook_accounts_file", "")
+    target, _normalized, accounts = _read_validated_pool(target_path)
     for account in accounts:
         def on_refresh(previous, rotated, email=account.email):
             try:

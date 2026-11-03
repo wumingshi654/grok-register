@@ -379,11 +379,38 @@ Outlook mode uses existing Outlook / Microsoft mailboxes that can be read throug
 ```json
 {
   "email_provider": "outlook",
+  "outlook_source": "file",
   "outlook_accounts_file": "./output/mailboxes/outlook-accounts.txt"
 }
 ```
 
-Each line in the mailbox pool uses the following format:
+Or configure external Outlook API management service mode (e.g. `outlookEmail` platforms):
+
+```json
+{
+  "email_provider": "outlook",
+  "outlook_source": "api",
+  "outlook_api_base": "http://127.0.0.1:5000",
+  "outlook_api_key": "your-api-key",
+  "outlook_web_password": "your-web-password",
+  "outlook_api_mode": "accounts",
+  "outlook_account_strategy": "round_robin",
+  "outlook_group_id": "",
+  "outlook_failed_group_id": "5",
+  "outlook_mail_folder": "inbox",
+  "outlook_mail_top": 10,
+  "outlook_auto_disable_on_success": true,
+  "outlook_move_group_on_failure": true
+}
+```
+
+**API Mode Features**:
+1. **Account fetching (`accounts` mode)**: Calls `GET {API_BASE}/api/external/accounts` with `X-API-Key` header, maintaining local in-memory concurrency reservations and round-robin / random selection.
+2. **Email and OTP polling**: Polls `GET {API_BASE}/api/external/emails?email={email}&folder={folder}&top={top}` with `X-API-Key` and extracts verification codes locally via regular expressions.
+3. **Auto-disable and group migration**: Authenticates via `POST {API_BASE}/api/extension/login` (exchanging web password for session cookies) and `GET {API_BASE}/api/csrf-token`. Upon registration success, automatically calls `PUT {API_BASE}/api/accounts/{id}` with `status=inactive`. Upon timeout or failure, calls `POST {API_BASE}/api/accounts/batch-update-group` to move the account into the specified failure group.
+4. **Temporary mailbox (`temp` mode)**: Sets `outlook_api_mode: "temp"`, calls `GET {API_BASE}/api/temp-emails` to fetch disposable addresses, and `GET {API_BASE}/api/temp-emails/{email}/messages` to poll incoming messages.
+
+In local file mode, each line in the mailbox pool uses the following format:
 
 ```text
 email----password----clientId----refreshToken----auto

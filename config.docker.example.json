@@ -1,6 +1,8 @@
 {
   "email_provider": "duckmail",
   "database_path": "/app/data/grok-register.sqlite3",
+  "outlook_source": "file",
+  "outlook_api_base": "",
   "outlook_accounts_file": "/app/data/mailboxes/outlook-accounts.txt",
   "proxy_pool_state_file": "/app/data/proxy_pool_state.json",
   "sso_risk_rejected_file": "/app/data/sso_risk_rejected.txt",

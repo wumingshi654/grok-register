@@ -22,6 +22,18 @@ DEFAULT_CONFIG = {
     "cloudmail_public_token": "",
     "cloudmail_domains": "",
     "cloudmail_path_messages": "/api/public/emailList",
+    "outlook_source": "file",
+    "outlook_api_base": "",
+    "outlook_api_key": "",
+    "outlook_web_password": "",
+    "outlook_api_mode": "accounts",
+    "outlook_account_strategy": "round_robin",
+    "outlook_group_id": "",
+    "outlook_failed_group_id": "",
+    "outlook_mail_folder": "inbox",
+    "outlook_mail_top": 10,
+    "outlook_auto_disable_on_success": True,
+    "outlook_move_group_on_failure": True,
     "outlook_accounts_file": "./output/mailboxes/outlook-accounts.txt",
     "database_path": "./data/grok-register.sqlite3",
     "proxy_mode": "auto",
@@ -130,11 +142,13 @@ def validate_config_structure(raw):
         "cpa_mint_cookie_inject", "multi_thread_enabled",
         "proxy_pool_probe_dual_stack", "proxy_pool_persist_health",
         "proxy_pool_subscription_public_only", "proxy_pool_preflight_enabled",
+        "outlook_auto_disable_on_success", "outlook_move_group_on_failure",
     )
     for key in bool_keys:
         cfg[key] = _require_bool(cfg, key)
     cfg["register_count"] = _require_int(cfg, "register_count", 1, 2500)
     cfg["multi_thread_workers"] = _require_int(cfg, "multi_thread_workers", 1, 8)
+    cfg["outlook_mail_top"] = _require_int(cfg, "outlook_mail_top", 1, 100)
     cfg["proxy_pool_refresh_interval_sec"] = _require_int(cfg, "proxy_pool_refresh_interval_sec", 0, 86400)
     cfg["proxy_pool_probe_interval_sec"] = _require_int(cfg, "proxy_pool_probe_interval_sec", 0, 86400)
     cfg["proxy_pool_probe_timeout_sec"] = _require_int(cfg, "proxy_pool_probe_timeout_sec", 3, 120)
@@ -163,6 +177,9 @@ def validate_config_structure(raw):
         "proxy_pool_endpoint_mode": {"auto", "fixed", "rotating"},
         "proxy_pool_probe_provider": {"cloudflare", "ipinfo"},
         "proxy_protocol_backend": {"auto", "sing-box", "native-only"},
+        "outlook_source": {"file", "api"},
+        "outlook_api_mode": {"accounts", "temp"},
+        "outlook_account_strategy": {"round_robin", "random"},
     }
     for key, allowed in enums.items():
         value = cfg.get(key, DEFAULT_CONFIG.get(key, ""))
@@ -184,7 +201,7 @@ def validate_config_structure(raw):
     url_keys = {
         "cloudflare_api_base", "cloudmail_api_base",
         "grok2api_remote_base", "cpa_base_url",
-        "proxy_pool_subscription_url",
+        "proxy_pool_subscription_url", "outlook_api_base",
     }
     for key in url_keys:
         value = cfg[key]
@@ -216,16 +233,23 @@ def validate_run_requirements(cfg):
     if provider == "yyds" and not (cfg["yyds_api_key"] or cfg["yyds_jwt"]):
         raise ConfigError("YYDS 模式需要至少配置 yyds_api_key 或 yyds_jwt")
     if provider == "outlook":
-        path = os.path.realpath(os.path.abspath(os.path.expanduser(cfg["outlook_accounts_file"])))
-        if not os.path.isfile(path):
-            raise ConfigError(f"Outlook 模式需要有效的账号池文件: {path}")
-        try:
-            from outlook_mailbox_pool import get_outlook_mailbox_pool_capacity
-            count = get_outlook_mailbox_pool_capacity(path)
-        except Exception as exc:
-            raise ConfigError(f"Outlook 账号池校验失败: {exc}") from exc
-        if int(count) <= 0:
-            raise ConfigError("Outlook 账号池没有有效账号")
+        is_api = cfg.get("outlook_source") == "api" or (bool(cfg.get("outlook_api_base")) and cfg.get("outlook_source") != "file")
+        if is_api:
+            if not cfg.get("outlook_api_base"):
+                raise ConfigError("Outlook API 模式需要配置 outlook_api_base")
+            if cfg.get("outlook_api_mode") == "accounts" and not cfg.get("outlook_api_key"):
+                raise ConfigError("Outlook accounts 模式需要配置 outlook_api_key")
+        else:
+            path = os.path.realpath(os.path.abspath(os.path.expanduser(cfg["outlook_accounts_file"])))
+            if not os.path.isfile(path):
+                raise ConfigError(f"Outlook 模式需要有效的账号池文件: {path}")
+            try:
+                from outlook_mailbox_pool import get_outlook_mailbox_pool_capacity
+                count = get_outlook_mailbox_pool_capacity(path)
+            except Exception as exc:
+                raise ConfigError(f"Outlook 账号池校验失败: {exc}") from exc
+            if int(count) <= 0:
+                raise ConfigError("Outlook 账号池没有有效账号")
 
     if cfg["proxy_mode"] == "single" and not cfg["proxy"]:
         raise ConfigError("single 代理模式必须配置 proxy")

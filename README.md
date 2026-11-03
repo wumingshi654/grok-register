@@ -375,11 +375,38 @@ Outlook 模式使用已经存在、可通过 OAuth2 读取邮件的 Outlook / Mi
 ```json
 {
   "email_provider": "outlook",
+  "outlook_source": "file",
   "outlook_accounts_file": "./output/mailboxes/outlook-accounts.txt"
 }
 ```
 
-邮箱池每行格式：
+或者使用外部 Outlook 管理 API 模式（如对接 `outlookEmail` 等系统）：
+
+```json
+{
+  "email_provider": "outlook",
+  "outlook_source": "api",
+  "outlook_api_base": "http://127.0.0.1:5000",
+  "outlook_api_key": "your-api-key",
+  "outlook_web_password": "your-web-password",
+  "outlook_api_mode": "accounts",
+  "outlook_account_strategy": "round_robin",
+  "outlook_group_id": "",
+  "outlook_failed_group_id": "5",
+  "outlook_mail_folder": "inbox",
+  "outlook_mail_top": 10,
+  "outlook_auto_disable_on_success": true,
+  "outlook_move_group_on_failure": true
+}
+```
+
+**API 模式支持特性**：
+1. **邮箱获取（accounts 模式）**：通过 `GET {API_BASE}/api/external/accounts`（携带 `X-API-Key`）拉取可用账号，并在本地内存维护并发预留、随机/轮询选取，避免多线程冲突与重复使用。
+2. **邮件与验证码轮询**：通过 `GET {API_BASE}/api/external/emails?email={email}&folder={folder}&top={top}` 轮询邮件列表并通过正则提取验证码。
+3. **注册成功后自动停用与移动分组**：通过 `POST {API_BASE}/api/extension/login`（Web 密码模拟登录换取 Session Cookie）以及 `GET {API_BASE}/api/csrf-token`，在注册成功后自动调用 `PUT {API_BASE}/api/accounts/{id}` 将状态置为 `inactive`；在超时或失败后自动调用 `POST {API_BASE}/api/accounts/batch-update-group` 将账号移动到指定失败分组。
+4. **临时邮箱（temp 模式）**：设置 `outlook_api_mode: "temp"`，通过 `GET {API_BASE}/api/temp-emails` 获取临时邮箱，通过 `GET {API_BASE}/api/temp-emails/{email}/messages` 轮询邮件与提取验证码。
+
+本地文件模式下的邮箱池每行格式：
 
 ```text
 email----password----clientId----refreshToken----auto

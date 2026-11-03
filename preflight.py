@@ -168,12 +168,16 @@ def _check_proxy_config(config):
 
 def _check_mailbox_config(config):
     provider = str(config.get("email_provider") or "duckmail").lower()
+    is_outlook_api = provider == "outlook" and (
+        config.get("outlook_source") == "api"
+        or (bool(config.get("outlook_api_base")) and config.get("outlook_source") != "file")
+    )
     required_fields = {
         "duckmail": (),
         "yyds": ("yyds_api_key", "yyds_jwt"),
         "cloudflare": ("cloudflare_api_base",),
         "cloudmail": ("cloudmail_api_base", "cloudmail_public_token", "cloudmail_domains"),
-        "outlook": ("outlook_accounts_file",),
+        "outlook": ("outlook_api_base",) if is_outlook_api else ("outlook_accounts_file",),
     }
     if provider not in required_fields:
         return _result("mailbox", "Mailbox", "ERROR", True, "未知邮箱服务商: %s" % provider)
@@ -188,11 +192,13 @@ def _check_mailbox_config(config):
             "mailbox", "Mailbox", "ERROR", True,
             "邮箱服务配置缺少: " + ", ".join(missing),
         )
-    if provider in {"cloudflare", "cloudmail"}:
-        base_key = "cloudflare_api_base" if provider == "cloudflare" else "cloudmail_api_base"
+    if provider in {"cloudflare", "cloudmail"} or is_outlook_api:
+        base_key = "cloudflare_api_base" if provider == "cloudflare" else ("cloudmail_api_base" if provider == "cloudmail" else "outlook_api_base")
         if not _valid_http_url(config.get(base_key)):
             return _result("mailbox", "Mailbox", "ERROR", True,
                            "%s API Base URL 无效" % provider)
+    if is_outlook_api and str(config.get("outlook_api_mode") or "accounts").strip().lower() == "accounts" and not config.get("outlook_api_key"):
+        return _result("mailbox", "Mailbox", "ERROR", True, "Outlook accounts 模式需要配置 outlook_api_key")
     if provider == "cloudflare":
         auth_mode = str(config.get("cloudflare_auth_mode") or "none").lower()
         if auth_mode != "none" and not config.get("cloudflare_api_key"):
@@ -201,6 +207,11 @@ def _check_mailbox_config(config):
                 "Cloudflare 当前鉴权模式需要配置 cloudflare_api_key",
             )
     if provider == "outlook":
+        if is_outlook_api:
+            return _result(
+                "mailbox", "Mailbox", "OK", True,
+                "Outlook API 模式配置齐全；接口连接尚未测试",
+            )
         try:
             from outlook_mailbox_pool import get_outlook_mailbox_pool_capacity
             count = get_outlook_mailbox_pool_capacity(config["outlook_accounts_file"])
@@ -370,12 +381,22 @@ def _check_mailbox_connection(config):
     try:
         provider = str(config.get("email_provider") or "duckmail").lower()
         if provider == "outlook":
-            from outlook_mailbox_pool import probe_outlook_mailbox_pool
+            is_api = config.get("outlook_source") == "api" or (
+                bool(config.get("outlook_api_base")) and config.get("outlook_source") != "file"
+            )
+            if is_api:
+                from outlook_api import probe_outlook_api
+                summary = probe_outlook_api(config)
+                if summary["count"] < 1:
+                    raise RuntimeError("Outlook API 未返回可用账号")
+                return "Outlook API (%s 模式) 可用账号: %s" % (summary["mode"], summary["count"])
+            else:
+                from outlook_mailbox_pool import probe_outlook_mailbox_pool
 
-            summary = probe_outlook_mailbox_pool(config["outlook_accounts_file"])
-            if summary["healthy"] < 1:
-                raise RuntimeError("Outlook 邮箱池中没有可用账号")
-            return "Outlook 可用邮箱: %s/%s" % (summary["healthy"], summary["count"])
+                summary = probe_outlook_mailbox_pool(config["outlook_accounts_file"])
+                if summary["healthy"] < 1:
+                    raise RuntimeError("Outlook 邮箱池中没有可用账号")
+                return "Outlook 可用邮箱: %s/%s" % (summary["healthy"], summary["count"])
         if provider == "duckmail":
             domains = mail_service.get_domains()
         elif provider == "yyds":

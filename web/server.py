@@ -409,6 +409,30 @@ async def test_outlook_mailboxes(request: Request):
     return JSONResponse({"ok": True, **summary})
 
 
+@app.post("/api/mailboxes/outlook/test-api")
+async def test_outlook_api(request: Request):
+    _require_local_origin(request)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    from outlook_api import probe_outlook_api
+
+    kind = "outlook_api_test"
+    _begin_maintenance(kind)
+    try:
+        try:
+            summary = await run_in_threadpool(probe_outlook_api, payload)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        _end_maintenance(kind)
+    _append_log(
+        "[*] Outlook API 连接检查完成: 模式 %s, 可用账号/邮箱 %s"
+        % (summary["mode"], summary["count"])
+    )
+    return JSONResponse({"ok": True, **summary})
+
+
 @app.get("/api/proxy-pool/status")
 def proxy_pool_status():
     from proxy_pool import manager_snapshot

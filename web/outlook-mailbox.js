@@ -40,8 +40,15 @@
     status.style.color = error ? '#ff7f7f' : '#707079';
   }
 
+  const sourceSelect = document.getElementById('outlook_source');
+
   function syncVisibility() {
-    wrapper.hidden = provider.value !== 'outlook';
+    const isOutlook = provider.value === 'outlook';
+    const isFile = !sourceSelect || sourceSelect.value === 'file';
+    wrapper.hidden = !isOutlook || !isFile;
+  }
+  if (sourceSelect) {
+    sourceSelect.addEventListener('change', syncVisibility);
   }
 
   function channelLabel(item, key) {
