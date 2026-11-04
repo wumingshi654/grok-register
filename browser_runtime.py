@@ -1,5 +1,6 @@
 """提供共享的 HTTP 请求、代理处理和 Chromium 启动参数。"""
 import os
+import re
 import urllib.parse
 
 from DrissionPage import ChromiumOptions
@@ -179,7 +180,46 @@ def _configure_browser_environment(options):
     return options
 
 
+def patch_ruyipage_run_js():
+    """修复 ruyiPage 在执行包含 return/函数声明的多语句脚本时误用 evaluate 模式导致 SyntaxError 的问题。"""
+    try:
+        import ruyipage._pages.firefox_base as fb
+    except (ImportError, AttributeError):
+        return
+    if getattr(fb.FirefoxBase, "_grok_register_patched", False):
+        return
+
+    orig_run_js = fb.FirefoxBase._run_js
+
+    def patched_run_js(self, script, *args, as_expr=None, sandbox=None, timeout=None):
+        if as_expr is None and isinstance(script, str):
+            stripped = script.strip()
+            named_fn = getattr(fb, "_NAMED_FUNCTION_DECL", None)
+            is_named_fn = bool(named_fn.match(stripped)) if named_fn else False
+            has_return = bool(re.search(r"\breturn\b", stripped))
+            is_iife = stripped.startswith("(") and (stripped.endswith(")") or stripped.endswith(");"))
+            if (
+                args
+                or stripped.startswith("return ")
+                or is_named_fn
+                or (has_return and not is_iife)
+                or "arguments[" in stripped
+            ):
+                as_expr = False
+        return orig_run_js(self, script, *args, as_expr=as_expr, sandbox=sandbox, timeout=timeout)
+
+    fb.FirefoxBase._run_js = patched_run_js
+    fb.FirefoxBase._grok_register_patched = True
+
+
+try:
+    patch_ruyipage_run_js()
+except Exception:
+    pass
+
+
 def create_ruyipage_options(browser_proxy="", extension_path=None):
+    patch_ruyipage_run_js()
     from ruyipage import FirefoxOptions
     options = FirefoxOptions()
     options.set_auto_port()

@@ -120,6 +120,65 @@ class RuyiPageIntegrationTests(unittest.TestCase):
         self.assertEqual(res["status"], "OK")
         self.assertIn("ruyiPage", res["message"])
 
+    def test_ruyipage_run_js_patches_named_function_and_return(self):
+        browser_runtime.patch_ruyipage_run_js()
+        import ruyipage._pages.firefox_base as fb
+
+        self.assertTrue(getattr(fb.FirefoxBase, "_grok_register_patched", False))
+
+        instance = fb.FirefoxBase()
+        instance._driver = Mock()
+        instance._context_id = "ctx_123"
+
+        with patch("ruyipage._pages.firefox_base.bidi_script") as mock_bidi:
+            mock_bidi.call_function.return_value = {
+                "type": "success",
+                "result": {"type": "string", "value": "clicked_button"},
+            }
+            mock_bidi.evaluate.return_value = {
+                "type": "success",
+                "result": {"type": "string", "value": "eval_result"},
+            }
+
+            # 1. Named helper function followed by return (exact pattern of click_email_signup_button)
+            script = """
+function isVisible(node) {
+    return true;
+}
+return isVisible();
+"""
+            res = instance.run_js(script)
+            self.assertEqual(res, "clicked_button")
+            self.assertTrue(mock_bidi.call_function.called)
+            self.assertFalse(mock_bidi.evaluate.called)
+            func_body = mock_bidi.call_function.call_args[0][2]
+            self.assertTrue(func_body.startswith("function(){"))
+
+            # 2. Variable declarations followed by return
+            mock_bidi.call_function.reset_mock()
+            mock_bidi.evaluate.reset_mock()
+            script2 = "const a = 1; return a;"
+            res2 = instance.run_js(script2)
+            self.assertEqual(res2, "clicked_button")
+            self.assertTrue(mock_bidi.call_function.called)
+            self.assertFalse(mock_bidi.evaluate.called)
+
+            # 3. Simple expression without return uses evaluate
+            mock_bidi.call_function.reset_mock()
+            mock_bidi.evaluate.reset_mock()
+            script3 = "document.title"
+            res3 = instance.run_js(script3)
+            self.assertEqual(res3, "eval_result")
+            self.assertFalse(mock_bidi.call_function.called)
+            self.assertTrue(mock_bidi.evaluate.called)
+
+            # 4. Explicit as_expr=True is respected
+            mock_bidi.call_function.reset_mock()
+            mock_bidi.evaluate.reset_mock()
+            instance.run_js("1 + 1", as_expr=True)
+            self.assertFalse(mock_bidi.call_function.called)
+            self.assertTrue(mock_bidi.evaluate.called)
+
 
 if __name__ == "__main__":
     unittest.main()

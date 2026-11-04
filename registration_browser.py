@@ -19,6 +19,8 @@ try:
     PAGE_DISCONNECTED_ERRORS += (r_errors.PageDisconnectedError,)
     CONTEXT_LOST_ERRORS += (r_errors.ContextLostError,)
     JAVASCRIPT_ERRORS += (r_errors.JavaScriptError,)
+    from browser_runtime import patch_ruyipage_run_js
+    patch_ruyipage_run_js()
 except ImportError:
     pass
 BROWSER_PAGE_ERRORS = CONTEXT_LOST_ERRORS + JAVASCRIPT_ERRORS + PAGE_DISCONNECTED_ERRORS
@@ -290,6 +292,8 @@ def start_browser(log_callback=None, use_proxy=True):
                 import importlib.util
                 if importlib.util.find_spec("ruyipage") is None:
                     raise RuntimeError("已配置使用 ruyiPage 引擎，但当前环境未安装 ruyiPage。请在终端执行: pip install ruyiPage")
+                from browser_runtime import patch_ruyipage_run_js
+                patch_ruyipage_run_js()
                 from ruyipage import Firefox
                 options = create_browser_options(browser_proxy=browser_proxy, framework="ruyipage")
                 browser = Firefox(options)
