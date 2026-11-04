@@ -328,6 +328,44 @@ class OutlookApiConfigIntegrationTests(unittest.TestCase):
             count = grok_register_ttk.resolve_registration_count(5)
             self.assertEqual(count, 5)
 
+    def test_url_canonicalization_and_cleaning(self):
+        from outlook_api import _canonical_url, _clean_api_base
+        self.assertEqual(_canonical_url("http://127.0.0.1:3000", "/api/external/accounts"), "http://127.0.0.1:3000/api/external/accounts")
+        self.assertEqual(_canonical_url("http://127.0.0.1:3000/api", "/api/external/accounts"), "http://127.0.0.1:3000/api/external/accounts")
+        self.assertEqual(_canonical_url("http://127.0.0.1:3000/api/", "/api/external/accounts"), "http://127.0.0.1:3000/api/external/accounts")
+        self.assertEqual(_canonical_url("http://127.0.0.1:3000/api/external/accounts", "/api/external/accounts"), "http://127.0.0.1:3000/api/external/accounts")
+        self.assertEqual(_canonical_url("127.0.0.1:5000", "/api/external/accounts"), "http://127.0.0.1:5000/api/external/accounts")
+
+    @patch("requests.Session.get")
+    def test_parse_json_html_error_handling(self, mock_get):
+        from outlook_api import OutlookApiError
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.url = "http://127.0.0.1:5000/api/external/accounts"
+        mock_resp.text = "<!DOCTYPE html><html><body>404 Not Found</body></html>"
+        mock_resp.headers = {"Content-Type": "text/html"}
+        mock_resp.json.side_effect = json.JSONDecodeError("Expecting value", mock_resp.text, 0)
+        mock_get.return_value = mock_resp
+
+        client = OutlookApiClient(api_base="http://127.0.0.1:5000", api_key="test")
+        with self.assertRaises(OutlookApiError) as ctx:
+            client.get_accounts()
+        self.assertIn("HTML 页面而非 JSON", str(ctx.exception))
+        self.assertIn("http://127.0.0.1:5000/api/external/accounts", str(ctx.exception))
+
+    @patch("requests.Session.get")
+    def test_get_accounts_api_failure_response(self, mock_get):
+        from outlook_api import OutlookApiError
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"success": False, "message": "Invalid API key"}
+        mock_get.return_value = mock_resp
+
+        client = OutlookApiClient(api_base="http://127.0.0.1:5000", api_key="bad-key")
+        with self.assertRaises(OutlookApiError) as ctx:
+            client.get_accounts()
+        self.assertIn("Invalid API key", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

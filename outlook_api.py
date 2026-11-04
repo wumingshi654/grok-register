@@ -31,12 +31,35 @@ _API_HANDLE_PREFIX = "outlook:api:"
 LogCallback = Optional[Callable[[str], None]]
 
 
-def _canonical_url(base_url: str, path: str = "") -> str:
+def _clean_api_base(base_url: str) -> str:
     base = str(base_url or "").strip().rstrip("/")
+    if base and not (base.startswith("http://") or base.startswith("https://")):
+        if base.startswith("localhost") or base.startswith("127.0.0.1") or ":" in base.split("/")[0]:
+            base = "http://" + base
+        else:
+            base = "https://" + base
+    for suffix in (
+        "/api/external/accounts",
+        "/api/external/emails",
+        "/api/external",
+        "/api/temp-emails",
+        "/api/csrf-token",
+        "/api/extension/login",
+    ):
+        if base.lower().endswith(suffix):
+            base = base[:-len(suffix)].rstrip("/")
+            break
+    return base
+
+
+def _canonical_url(base_url: str, path: str = "") -> str:
+    base = _clean_api_base(base_url)
     if not path:
         return base
     if not path.startswith("/"):
         path = "/" + path
+    if base.lower().endswith("/api") and path.lower().startswith("/api/"):
+        base = base[:-4]
     return base + path
 
 
@@ -64,15 +87,23 @@ class OutlookApiClient:
         timeout: float = 15.0,
         log_callback: LogCallback = None,
     ) -> None:
-        self.api_base = str(api_base or "").strip().rstrip("/")
+        self.api_base = _clean_api_base(api_base)
         self.api_key = str(api_key or "").strip()
         self.web_password = str(web_password or "").strip()
         self.timeout = max(3.0, float(timeout or 15.0))
         self.log_callback = log_callback
         self._session = requests.Session()
+        self._session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+        })
         self._csrf_token: Optional[str] = None
         self._session_lock = threading.Lock()
         self._logged_in = False
+
+    @property
+    def is_logged_in(self) -> bool:
+        return self._logged_in
 
     def _log(self, message: str) -> None:
         if self.log_callback:
@@ -82,12 +113,52 @@ class OutlookApiClient:
                 pass
 
     def _auth_headers(self, additional: Optional[dict] = None) -> dict:
-        headers = {}
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+        }
         if self.api_key:
             headers["X-API-Key"] = self.api_key
         if additional:
             headers.update(additional)
         return headers
+
+    def _parse_json(self, resp: requests.Response, context: str = "") -> Any:
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            raw_text = str(getattr(resp, "text", "") or "")
+            snippet = raw_text[:300].strip().replace("\r", "").replace("\n", " ")
+            raise OutlookApiError(
+                f"Outlook API [{context or getattr(resp, 'url', '')}] 请求失败 (HTTP {getattr(resp, 'status_code', 0)}): {snippet or exc}"
+            ) from exc
+
+        try:
+            return resp.json()
+        except Exception as exc:
+            content_type = ""
+            if hasattr(resp, "headers") and resp.headers:
+                try:
+                    content_type = str(resp.headers.get("Content-Type", "")).lower()
+                except Exception:
+                    pass
+            raw_text = str(getattr(resp, "text", "") or "").strip()
+            snippet = raw_text[:300].replace("\r", "").replace("\n", " ")
+            if not raw_text:
+                raise OutlookApiError(
+                    f"Outlook API [{context or getattr(resp, 'url', '')}] 返回了空响应 (HTTP {getattr(resp, 'status_code', 0)})"
+                ) from exc
+            if raw_text.startswith("<") or "html" in content_type:
+                raise OutlookApiError(
+                    f"Outlook API [{context or getattr(resp, 'url', '')}] 返回了 HTML 页面而非 JSON (HTTP {getattr(resp, 'status_code', 0)})。\n"
+                    f"当前请求地址: {getattr(resp, 'url', '')}\n"
+                    f"可能原因: 1. API Base URL 填写不正确或被反向代理/前端单页路由拦截；2. 需确认服务端口和路径是否正确。\n"
+                    f"响应内容预览: {snippet}"
+                ) from exc
+            raise OutlookApiError(
+                f"Outlook API [{context or getattr(resp, 'url', '')}] 返回了非 JSON 格式响应 (HTTP {getattr(resp, 'status_code', 0)})。\n"
+                f"当前请求地址: {getattr(resp, 'url', '')}\n"
+                f"响应内容预览: {snippet}"
+            ) from exc
 
     def login(self) -> bool:
         """Authenticate via Web password using /api/extension/login and obtain session."""
@@ -110,8 +181,11 @@ class OutlookApiClient:
                         timeout=self.timeout,
                     )
                 resp.raise_for_status()
-                data = resp.json() if resp.headers.get("Content-Type", "").startswith("application/json") else {}
-                launch_url = data.get("launch_url")
+                try:
+                    data = resp.json() if resp.headers.get("Content-Type", "").startswith("application/json") else {}
+                except Exception:
+                    data = {}
+                launch_url = data.get("launch_url") if isinstance(data, dict) else None
                 if launch_url:
                     exchange_url = urllib.parse.urljoin(self.api_base + "/", str(launch_url).lstrip("/"))
                     exch_resp = self._session.get(exchange_url, timeout=self.timeout, allow_redirects=True)
@@ -126,19 +200,22 @@ class OutlookApiClient:
 
     def _fetch_csrf_token_locked(self) -> str:
         csrf_url = _canonical_url(self.api_base, "/api/csrf-token")
-        resp = self._session.get(csrf_url, timeout=self.timeout)
-        resp.raise_for_status()
-        token = ""
         try:
-            data = resp.json()
-            if isinstance(data, dict):
-                token = (
-                    data.get("csrf_token")
-                    or data.get("csrfToken")
-                    or data.get("token")
-                    or (data.get("data") if isinstance(data.get("data"), dict) else {}).get("csrf_token")
-                    or ""
-                )
+            resp = self._session.get(csrf_url, timeout=self.timeout)
+            resp.raise_for_status()
+            token = ""
+            try:
+                data = resp.json()
+                if isinstance(data, dict):
+                    token = (
+                        data.get("csrf_token")
+                        or data.get("csrfToken")
+                        or data.get("token")
+                        or (data.get("data") if isinstance(data.get("data"), dict) else {}).get("csrf_token")
+                        or ""
+                    )
+            except Exception:
+                token = ""
         except Exception:
             token = ""
         if not token:
@@ -171,6 +248,7 @@ class OutlookApiClient:
         url = _canonical_url(self.api_base, path)
         headers = dict(kwargs.pop("headers", {}) or {})
         headers.setdefault("Content-Type", "application/json")
+        headers.setdefault("Accept", "application/json, text/plain, */*")
         token = self.get_csrf_token()
         if token:
             headers["X-CSRFToken"] = token
@@ -195,13 +273,21 @@ class OutlookApiClient:
             params["group"] = str(group_id).strip()
 
         resp = self._session.get(url, headers=headers, params=params, timeout=self.timeout)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._parse_json(resp, context=f"GET {url}")
         raw_list = []
         if isinstance(data, list):
             raw_list = data
         elif isinstance(data, dict):
-            raw_list = data.get("accounts") or data.get("data") or []
+            if data.get("success") is False and (data.get("message") or data.get("error")):
+                msg = data.get("message") or data.get("error")
+                raise OutlookApiError(f"Outlook API 获取账号失败: {msg}")
+            raw_list = (
+                data.get("accounts")
+                or data.get("data")
+                or data.get("items")
+                or data.get("list")
+                or []
+            )
 
         accounts: list[OutlookApiAccount] = []
         for item in raw_list:
@@ -242,12 +328,19 @@ class OutlookApiClient:
             "top": max(1, int(top or 10)),
         }
         resp = self._session.get(url, headers=headers, params=params, timeout=self.timeout)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._parse_json(resp, context=f"GET {url}")
         if isinstance(data, list):
             return [msg for msg in data if isinstance(msg, dict)]
         if isinstance(data, dict):
-            raw = data.get("emails") or data.get("messages") or data.get("data") or []
+            if data.get("success") is False and (data.get("message") or data.get("error")):
+                self._log(f"[!] Outlook API 获取邮件提示: {data.get('message') or data.get('error')}")
+            raw = (
+                data.get("emails")
+                or data.get("messages")
+                or data.get("data")
+                or data.get("items")
+                or []
+            )
             if isinstance(raw, list):
                 return [msg for msg in raw if isinstance(msg, dict)]
         return []
@@ -293,15 +386,17 @@ class OutlookApiClient:
         url = _canonical_url(self.api_base, "/api/temp-emails")
         headers = self._auth_headers()
         resp = self._session.get(url, headers=headers, timeout=self.timeout)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._parse_json(resp, context=f"GET {url}")
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
+            if data.get("success") is False and (data.get("message") or data.get("error")):
+                self._log(f"[!] Outlook API 获取临时邮箱提示: {data.get('message') or data.get('error')}")
             return (
                 data.get("temp_emails")
                 or data.get("emails")
                 or data.get("data")
+                or data.get("items")
                 or []
             )
         return []
@@ -324,12 +419,19 @@ class OutlookApiClient:
         url = _canonical_url(self.api_base, f"/api/temp-emails/{quoted_email}/messages")
         headers = self._auth_headers()
         resp = self._session.get(url, headers=headers, timeout=self.timeout)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._parse_json(resp, context=f"GET {url}")
         if isinstance(data, list):
             return [msg for msg in data if isinstance(msg, dict)]
         if isinstance(data, dict):
-            raw = data.get("messages") or data.get("emails") or data.get("data") or []
+            if data.get("success") is False and (data.get("message") or data.get("error")):
+                self._log(f"[!] Outlook API 获取临时邮件提示: {data.get('message') or data.get('error')}")
+            raw = (
+                data.get("messages")
+                or data.get("emails")
+                or data.get("data")
+                or data.get("items")
+                or []
+            )
             if isinstance(raw, list):
                 return [msg for msg in raw if isinstance(msg, dict)]
         return []
@@ -449,6 +551,12 @@ class OutlookApiTaskRuntime:
                 pass
 
     def _initialize_pool(self) -> None:
+        if getattr(self.api_client, "web_password", None) and not getattr(self.api_client, "is_logged_in", False):
+            try:
+                self.api_client.login()
+            except Exception as exc:
+                self._log(f"[*] Outlook API Web 登录提示: {exc}")
+
         if self.mode == "accounts":
             accounts = self.api_client.get_accounts(group_id=self.group_id)
             if self.group_id:
@@ -464,6 +572,9 @@ class OutlookApiTaskRuntime:
             active_accounts = [acc for acc in accounts if acc.status != "inactive"]
             if active_accounts:
                 accounts = active_accounts
+            if not accounts:
+                group_hint = f" (分组: {self.group_id})" if self.group_id else ""
+                raise OutlookApiError(f"Outlook API 未获取到可用账号{group_hint}，请检查账号池中是否存在 active 状态账号")
             self._pool = OutlookApiAccountPool(accounts, strategy=self.strategy)
             self._log(f"[*] Outlook API (accounts 模式) 已加载 {len(accounts)} 个可用账号")
         else:
@@ -481,7 +592,7 @@ class OutlookApiTaskRuntime:
                 if generated:
                     accounts.append(OutlookApiAccount(email=generated))
             if not accounts:
-                raise ValueError("Outlook API (temp 模式) 未获取到任何临时邮箱")
+                raise OutlookApiError("Outlook API (temp 模式) 未获取到任何临时邮箱")
             self._pool = OutlookApiAccountPool(accounts, strategy=self.strategy)
             self._log(f"[*] Outlook API (temp 模式) 已加载 {len(accounts)} 个临时邮箱")
 
