@@ -439,8 +439,8 @@ def create_outlook_task_runtime(
     config: Optional[dict] = None,
 ) -> Union[OutlookTaskRuntime, Any]:
     cfg = path_or_config if isinstance(path_or_config, dict) else (config if isinstance(config, dict) else {})
-    is_api = cfg.get("outlook_source") == "api" or (bool(cfg.get("outlook_api_base")) and cfg.get("outlook_source") != "file")
-    if is_api:
+    from app_config import is_outlook_api_mode
+    if is_outlook_api_mode(cfg):
         from outlook_api import create_outlook_api_task_runtime
         return create_outlook_api_task_runtime(
             cfg, log_callback=log_callback, cancelled_exception=cancelled_exception

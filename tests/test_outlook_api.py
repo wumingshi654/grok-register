@@ -316,6 +316,18 @@ class OutlookApiConfigIntegrationTests(unittest.TestCase):
             self.assertIsInstance(runtime, OutlookApiTaskRuntime)
             self.assertEqual(runtime.count, 1)
 
+    def test_resolve_registration_count_in_api_mode_bypasses_file_check(self):
+        import grok_register_ttk
+        with patch.dict(grok_register_ttk.config, {
+            "email_provider": "outlook",
+            "outlook_source": "api",
+            "outlook_api_base": "http://127.0.0.1:5000",
+            "outlook_api_key": "test-key",
+            "outlook_accounts_file": "/nonexistent/path/outlook-accounts.txt",
+        }, clear=False):
+            count = grok_register_ttk.resolve_registration_count(5)
+            self.assertEqual(count, 5)
+
 
 if __name__ == "__main__":
     unittest.main()

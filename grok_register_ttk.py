@@ -763,6 +763,9 @@ def resolve_registration_count(count, log_callback=None):
     provider = str(config.get("email_provider", "") or "").strip().lower()
     if provider != "outlook":
         return requested
+    from app_config import is_outlook_api_mode
+    if is_outlook_api_mode(config):
+        return requested
     from outlook_mailbox_pool import get_outlook_mailbox_pool_capacity
     available = get_outlook_mailbox_pool_capacity(config.get("outlook_accounts_file", ""))
     effective = min(requested, int(available))
@@ -1293,6 +1296,46 @@ class GrokRegisterGUI:
         )
         add_field(self.outlook_pool_btn, 22, 3, sticky=tk.W)
 
+        add_label(23, 0, "Outlook 来源模式:")
+        self.outlook_source_var = tk.StringVar(value=str(config.get("outlook_source", "auto")))
+        self.outlook_source_combo = tk_option_menu(config_frame, self.outlook_source_var, ["auto", "file", "api"], width=12)
+        add_field(self.outlook_source_combo, 23, 1, sticky=tk.W)
+
+        add_label(23, 2, "Outlook API Base:")
+        self.outlook_api_base_var = tk.StringVar(value=str(config.get("outlook_api_base", "")))
+        self.outlook_api_base_entry = tk_entry(config_frame, textvariable=self.outlook_api_base_var, width=34)
+        add_field(self.outlook_api_base_entry, 23, 3)
+
+        add_label(24, 0, "Outlook API Key:")
+        self.outlook_api_key_var = tk.StringVar(value=str(config.get("outlook_api_key", "")))
+        self.outlook_api_key_entry = tk_entry(config_frame, textvariable=self.outlook_api_key_var, width=34, show="*")
+        add_field(self.outlook_api_key_entry, 24, 1)
+
+        add_label(24, 2, "Outlook Web 密码:")
+        self.outlook_web_password_var = tk.StringVar(value=str(config.get("outlook_web_password", "")))
+        self.outlook_web_password_entry = tk_entry(config_frame, textvariable=self.outlook_web_password_var, width=34, show="*")
+        add_field(self.outlook_web_password_entry, 24, 3)
+
+        add_label(25, 0, "Outlook API 模式:")
+        self.outlook_api_mode_var = tk.StringVar(value=str(config.get("outlook_api_mode", "accounts")))
+        self.outlook_api_mode_combo = tk_option_menu(config_frame, self.outlook_api_mode_var, ["accounts", "temp"], width=12)
+        add_field(self.outlook_api_mode_combo, 25, 1, sticky=tk.W)
+
+        add_label(25, 2, "账号选取策略:")
+        self.outlook_account_strategy_var = tk.StringVar(value=str(config.get("outlook_account_strategy", "round_robin")))
+        self.outlook_account_strategy_combo = tk_option_menu(config_frame, self.outlook_account_strategy_var, ["round_robin", "random"], width=12)
+        add_field(self.outlook_account_strategy_combo, 25, 3, sticky=tk.W)
+
+        add_label(26, 0, "Outlook 分组 ID:")
+        self.outlook_group_id_var = tk.StringVar(value=str(config.get("outlook_group_id", "")))
+        self.outlook_group_id_entry = tk_entry(config_frame, textvariable=self.outlook_group_id_var, width=34)
+        add_field(self.outlook_group_id_entry, 26, 1)
+
+        add_label(26, 2, "失败移动分组 ID:")
+        self.outlook_failed_group_id_var = tk.StringVar(value=str(config.get("outlook_failed_group_id", "")))
+        self.outlook_failed_group_id_entry = tk_entry(config_frame, textvariable=self.outlook_failed_group_id_var, width=34)
+        add_field(self.outlook_failed_group_id_entry, 26, 3)
+
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
         btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
         self.start_btn = tk_button(btn_frame, text="开始注册", command=self.start_registration)
@@ -1466,6 +1509,14 @@ class GrokRegisterGUI:
                 self.outlook_accounts_file_var.get().strip()
                 or "./output/mailboxes/outlook-accounts.txt"
             ),
+            "outlook_source": self.outlook_source_var.get().strip() or "auto",
+            "outlook_api_base": self.outlook_api_base_var.get().strip(),
+            "outlook_api_key": self.outlook_api_key_var.get().strip(),
+            "outlook_web_password": self.outlook_web_password_var.get(),
+            "outlook_api_mode": self.outlook_api_mode_var.get().strip() or "accounts",
+            "outlook_account_strategy": self.outlook_account_strategy_var.get().strip() or "round_robin",
+            "outlook_group_id": self.outlook_group_id_var.get().strip(),
+            "outlook_failed_group_id": self.outlook_failed_group_id_var.get().strip(),
             "proxy": self.proxy_var.get().strip(),
             "proxy_mode": self.proxy_mode_var.get().strip() or "auto",
             "proxy_fallback": self.proxy_fallback_var.get().strip() or "none",
@@ -1759,6 +1810,14 @@ class GrokRegisterGUI:
         config["outlook_accounts_file"] = (
             self.outlook_accounts_file_var.get().strip() or "./output/mailboxes/outlook-accounts.txt"
         )
+        config["outlook_source"] = self.outlook_source_var.get().strip() or "auto"
+        config["outlook_api_base"] = self.outlook_api_base_var.get().strip()
+        config["outlook_api_key"] = self.outlook_api_key_var.get().strip()
+        config["outlook_web_password"] = self.outlook_web_password_var.get()
+        config["outlook_api_mode"] = self.outlook_api_mode_var.get().strip() or "accounts"
+        config["outlook_account_strategy"] = self.outlook_account_strategy_var.get().strip() or "round_robin"
+        config["outlook_group_id"] = self.outlook_group_id_var.get().strip()
+        config["outlook_failed_group_id"] = self.outlook_failed_group_id_var.get().strip()
         config["grok2api_auto_add_local"] = bool(self.grok2api_local_auto_var.get())
         config["grok2api_local_token_file"] = self.grok2api_local_file_var.get().strip()
         config["grok2api_pool_name"] = self.grok2api_pool_name_var.get().strip() or "ssoBasic"

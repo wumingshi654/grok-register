@@ -22,7 +22,7 @@ DEFAULT_CONFIG = {
     "cloudmail_public_token": "",
     "cloudmail_domains": "",
     "cloudmail_path_messages": "/api/public/emailList",
-    "outlook_source": "file",
+    "outlook_source": "auto",
     "outlook_api_base": "",
     "outlook_api_key": "",
     "outlook_web_password": "",
@@ -177,7 +177,7 @@ def validate_config_structure(raw):
         "proxy_pool_endpoint_mode": {"auto", "fixed", "rotating"},
         "proxy_pool_probe_provider": {"cloudflare", "ipinfo"},
         "proxy_protocol_backend": {"auto", "sing-box", "native-only"},
-        "outlook_source": {"file", "api"},
+        "outlook_source": {"auto", "file", "api"},
         "outlook_api_mode": {"accounts", "temp"},
         "outlook_account_strategy": {"round_robin", "random"},
     }
@@ -218,6 +218,17 @@ def validate_config_structure(raw):
     return cfg
 
 
+def is_outlook_api_mode(cfg):
+    """Determine whether Outlook should operate in external API mode or local file mode."""
+    source = str(cfg.get("outlook_source", "") or "").strip().lower()
+    if source == "api":
+        return True
+    if source == "file":
+        return False
+    # If source is "auto" or unspecified:
+    return bool(str(cfg.get("outlook_api_base", "") or "").strip())
+
+
 def validate_run_requirements(cfg):
     cfg = validate_config_structure(cfg)
     provider = cfg["email_provider"]
@@ -233,8 +244,7 @@ def validate_run_requirements(cfg):
     if provider == "yyds" and not (cfg["yyds_api_key"] or cfg["yyds_jwt"]):
         raise ConfigError("YYDS 模式需要至少配置 yyds_api_key 或 yyds_jwt")
     if provider == "outlook":
-        is_api = cfg.get("outlook_source") == "api" or (bool(cfg.get("outlook_api_base")) and cfg.get("outlook_source") != "file")
-        if is_api:
+        if is_outlook_api_mode(cfg):
             if not cfg.get("outlook_api_base"):
                 raise ConfigError("Outlook API 模式需要配置 outlook_api_base")
             if cfg.get("outlook_api_mode") == "accounts" and not cfg.get("outlook_api_key"):

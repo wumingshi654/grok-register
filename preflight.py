@@ -168,10 +168,8 @@ def _check_proxy_config(config):
 
 def _check_mailbox_config(config):
     provider = str(config.get("email_provider") or "duckmail").lower()
-    is_outlook_api = provider == "outlook" and (
-        config.get("outlook_source") == "api"
-        or (bool(config.get("outlook_api_base")) and config.get("outlook_source") != "file")
-    )
+    from app_config import is_outlook_api_mode
+    is_outlook_api = provider == "outlook" and is_outlook_api_mode(config)
     required_fields = {
         "duckmail": (),
         "yyds": ("yyds_api_key", "yyds_jwt"),
@@ -381,10 +379,8 @@ def _check_mailbox_connection(config):
     try:
         provider = str(config.get("email_provider") or "duckmail").lower()
         if provider == "outlook":
-            is_api = config.get("outlook_source") == "api" or (
-                bool(config.get("outlook_api_base")) and config.get("outlook_source") != "file"
-            )
-            if is_api:
+            from app_config import is_outlook_api_mode
+            if is_outlook_api_mode(config):
                 from outlook_api import probe_outlook_api
                 summary = probe_outlook_api(config)
                 if summary["count"] < 1:
