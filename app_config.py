@@ -92,6 +92,8 @@ DEFAULT_CONFIG = {
     "yyds_api_key": "",
     "yyds_jwt": "",
     "defaultDomains": "",
+    "browser_framework": "drissionpage",
+    "browser_path": "",
 }
 
 
@@ -180,6 +182,7 @@ def validate_config_structure(raw):
         "outlook_source": {"auto", "file", "api"},
         "outlook_api_mode": {"accounts", "temp"},
         "outlook_account_strategy": {"round_robin", "random"},
+        "browser_framework": {"drissionpage", "ruyipage"},
     }
     for key, allowed in enums.items():
         value = cfg.get(key, DEFAULT_CONFIG.get(key, ""))
@@ -227,6 +230,15 @@ def is_outlook_api_mode(cfg):
         return False
     # If source is "auto" or unspecified:
     return bool(str(cfg.get("outlook_api_base", "") or "").strip())
+
+
+def get_browser_framework(cfg=None):
+    """Get normalized browser automation framework ('drissionpage' or 'ruyipage')."""
+    target = cfg if isinstance(cfg, dict) else config
+    raw = str(target.get("browser_framework") or target.get("browser_engine") or "drissionpage").strip().lower()
+    if raw in ("ruyipage", "ruyi", "firefox"):
+        return "ruyipage"
+    return "drissionpage"
 
 
 def validate_run_requirements(cfg):

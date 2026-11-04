@@ -90,19 +90,24 @@ def _check_configuration(config):
     )
 
 
-def _check_browser_runtime():
+def _check_browser_runtime(config=None):
+    from app_config import get_browser_framework
+    fw = get_browser_framework(config)
+    needed = ("ruyipage", "curl_cffi") if fw == "ruyipage" else ("DrissionPage", "curl_cffi")
     missing = [
-        package for package in ("DrissionPage", "curl_cffi")
+        package for package in needed
         if importlib.util.find_spec(package) is None
     ]
     if missing:
+        hint = " (请执行 pip install ruyiPage)" if "ruyipage" in missing else ""
         return _result(
             "browser", "Browser Runtime", "ERROR", True,
-            "缺少运行依赖: " + ", ".join(missing),
+            "缺少运行依赖: " + ", ".join(missing) + hint,
         )
+    fw_name = "ruyiPage" if fw == "ruyipage" else "DrissionPage"
     return _result(
         "browser", "Browser Runtime", "OK", True,
-        "DrissionPage 和 curl_cffi 已安装；浏览器启动测试尚未执行",
+        f"{fw_name} 和 curl_cffi 已安装；浏览器启动测试尚未执行",
     )
 
 
@@ -359,16 +364,19 @@ def _check_proxy_connection(config, log_callback=None):
     return "网络可达（HTTP %s）" % status
 
 
-def _check_browser_connection():
+def _check_browser_connection(config=None):
     import registration_browser
+    from app_config import get_browser_framework
+    fw = get_browser_framework(config)
 
     try:
         registration_browser.start_browser(use_proxy=False)
         if registration_browser.browser is None or registration_browser.page is None:
-            raise RuntimeError("Chromium 未创建有效页面")
+            raise RuntimeError("浏览器未创建有效页面")
     finally:
         registration_browser.stop_browser()
-    return "Chromium 启动和页面创建成功"
+    name = "Firefox (ruyiPage)" if fw == "ruyipage" else "Chromium (DrissionPage)"
+    return f"{name} 启动和页面创建成功"
 
 
 def _check_mailbox_connection(config):
@@ -448,7 +456,7 @@ def run_health_checks(config, connectivity=False, log_callback=None):
             lambda: _check_configuration(cfg), "configuration", "Configuration", True, cfg
         ),
         _run_static_check(
-            _check_browser_runtime, "browser", "Browser Runtime", True, cfg
+            lambda: _check_browser_runtime(cfg), "browser", "Browser Runtime", True, cfg
         ),
         _run_static_check(
             lambda: _check_proxy_config(cfg), "proxy", "Proxy", proxy_required, cfg
@@ -464,7 +472,7 @@ def run_health_checks(config, connectivity=False, log_callback=None):
         ),
     ]
     probes = {
-        "browser": _check_browser_connection,
+        "browser": lambda: _check_browser_connection(cfg),
         "proxy": lambda: _check_proxy_connection(cfg, log_callback=log_callback),
         "mailbox": lambda: _check_mailbox_connection(cfg),
         "cpa": lambda: _check_cpa_connection(cfg),

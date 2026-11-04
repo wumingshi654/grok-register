@@ -38,8 +38,13 @@ import traceback
 
 os.environ.setdefault("TK_SILENCE_DEPRECATION", "1")
 
-from DrissionPage import Chromium, ChromiumOptions
-from DrissionPage.errors import PageDisconnectedError
+try:
+    from DrissionPage import Chromium, ChromiumOptions
+    from DrissionPage.errors import PageDisconnectedError
+except ImportError:
+    Chromium = None
+    ChromiumOptions = None
+    PageDisconnectedError = type("PageDisconnectedError", (Exception,), {})
 from curl_cffi import requests
 
 import functools
@@ -1336,6 +1341,16 @@ class GrokRegisterGUI:
         self.outlook_failed_group_id_entry = tk_entry(config_frame, textvariable=self.outlook_failed_group_id_var, width=34)
         add_field(self.outlook_failed_group_id_entry, 26, 3)
 
+        add_label(27, 0, "浏览器框架:")
+        self.browser_framework_var = tk.StringVar(value=str(config.get("browser_framework", "drissionpage")))
+        self.browser_framework_combo = tk_option_menu(config_frame, self.browser_framework_var, ["drissionpage", "ruyipage"], width=12)
+        add_field(self.browser_framework_combo, 27, 1, sticky=tk.W)
+
+        add_label(27, 2, "浏览器路径(可选):")
+        self.browser_path_var = tk.StringVar(value=str(config.get("browser_path", "")))
+        self.browser_path_entry = tk_entry(config_frame, textvariable=self.browser_path_var, width=34)
+        add_field(self.browser_path_entry, 27, 3)
+
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
         btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
         self.start_btn = tk_button(btn_frame, text="开始注册", command=self.start_registration)
@@ -1517,6 +1532,8 @@ class GrokRegisterGUI:
             "outlook_account_strategy": self.outlook_account_strategy_var.get().strip() or "round_robin",
             "outlook_group_id": self.outlook_group_id_var.get().strip(),
             "outlook_failed_group_id": self.outlook_failed_group_id_var.get().strip(),
+            "browser_framework": self.browser_framework_var.get().strip() or "drissionpage",
+            "browser_path": self.browser_path_var.get().strip(),
             "proxy": self.proxy_var.get().strip(),
             "proxy_mode": self.proxy_mode_var.get().strip() or "auto",
             "proxy_fallback": self.proxy_fallback_var.get().strip() or "none",
@@ -1818,6 +1835,8 @@ class GrokRegisterGUI:
         config["outlook_account_strategy"] = self.outlook_account_strategy_var.get().strip() or "round_robin"
         config["outlook_group_id"] = self.outlook_group_id_var.get().strip()
         config["outlook_failed_group_id"] = self.outlook_failed_group_id_var.get().strip()
+        config["browser_framework"] = self.browser_framework_var.get().strip() or "drissionpage"
+        config["browser_path"] = self.browser_path_var.get().strip()
         config["grok2api_auto_add_local"] = bool(self.grok2api_local_auto_var.get())
         config["grok2api_local_token_file"] = self.grok2api_local_file_var.get().strip()
         config["grok2api_pool_name"] = self.grok2api_pool_name_var.get().strip() or "ssoBasic"

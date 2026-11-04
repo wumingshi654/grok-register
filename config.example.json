@@ -80,5 +80,7 @@
   "yyds_jwt": "",
   "cpa_oidc_request_timeout_sec": 15,
   "cpa_oidc_poll_timeout_sec": 15,
-  "grok2api_allow_legacy_full_save": false
+  "grok2api_allow_legacy_full_save": false,
+  "browser_framework": "drissionpage",
+  "browser_path": ""
 }

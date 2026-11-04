@@ -9,8 +9,24 @@ import time
 
 from DrissionPage import Chromium
 from DrissionPage.errors import ContextLostError, JavaScriptError, PageDisconnectedError
+
+PAGE_DISCONNECTED_ERRORS = (PageDisconnectedError,)
+CONTEXT_LOST_ERRORS = (ContextLostError,)
+JAVASCRIPT_ERRORS = (JavaScriptError,)
+try:
+    import ruyipage
+    import ruyipage.errors as r_errors
+    PAGE_DISCONNECTED_ERRORS += (r_errors.PageDisconnectedError,)
+    CONTEXT_LOST_ERRORS += (r_errors.ContextLostError,)
+    JAVASCRIPT_ERRORS += (r_errors.JavaScriptError,)
+except ImportError:
+    pass
+BROWSER_PAGE_ERRORS = CONTEXT_LOST_ERRORS + JAVASCRIPT_ERRORS + PAGE_DISCONNECTED_ERRORS
 from curl_cffi import requests
 from proxy_pool import ProxyTransportError, safe_proxy_error_text
+
+class AccountRetryNeeded(Exception):
+    pass
 
 browser = None
 page = None
@@ -45,7 +61,7 @@ def _managed_proxy_mode():
 
 
 def _is_pre_submit_js_transient(exc):
-    if isinstance(exc, (TimeoutError, ContextLostError, PageDisconnectedError)):
+    if isinstance(exc, (TimeoutError, *CONTEXT_LOST_ERRORS, *PAGE_DISCONNECTED_ERRORS)):
         return True
     if isinstance(exc, RuntimeError):
         message = str(exc or "").lower()
@@ -245,22 +261,50 @@ def stop_browser_proxy_bridge():
             pass
     browser_proxy_bridge = None
 
+def _safe_browser_quit(browser_obj):
+    if browser_obj is None:
+        return
+    try:
+        browser_obj.quit(del_data=True)
+    except TypeError:
+        try:
+            browser_obj.quit()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
 def start_browser(log_callback=None, use_proxy=True):
     global browser, page, browser_proxy_bridge, browser_started_with_proxy
     _mark_registration_stage("browser_start")
     last_exc = None
     proxy_enabled = bool(use_proxy and get_configured_proxy())
+    from app_config import get_browser_framework
+    framework = get_browser_framework(config if "config" in globals() else None)
+
     for attempt in range(1, 5):
         bridge = None
         try:
             browser_proxy, bridge = prepare_browser_proxy(use_proxy=use_proxy, log_callback=log_callback)
-            browser = Chromium(create_browser_options(browser_proxy=browser_proxy))
+            if framework == "ruyipage":
+                import importlib.util
+                if importlib.util.find_spec("ruyipage") is None:
+                    raise RuntimeError("已配置使用 ruyiPage 引擎，但当前环境未安装 ruyiPage。请在终端执行: pip install ruyiPage")
+                from ruyipage import Firefox
+                options = create_browser_options(browser_proxy=browser_proxy, framework="ruyipage")
+                browser = Firefox(options)
+            else:
+                options = create_browser_options(browser_proxy=browser_proxy, framework="drissionpage")
+                browser = Chromium(options)
             browser_proxy_bridge = bridge
             browser_started_with_proxy = bool(browser_proxy)
             tabs = browser.get_tabs()
             page = tabs[-1] if tabs else browser.new_tab()
             if log_callback and getattr(browser, "user_data_path", None):
                 log_callback(f"[Debug] 当前浏览器资料目录: {browser.user_data_path}")
+            if log_callback:
+                fw_name = "ruyiPage (Firefox)" if framework == "ruyipage" else "DrissionPage (Chromium)"
+                log_callback(f"[*] 浏览器引擎: {fw_name}")
             if log_callback and get_configured_proxy():
                 mode = "代理" if browser_started_with_proxy else "直连"
                 log_callback(f"[*] 浏览器网络模式: {mode}")
@@ -277,11 +321,7 @@ def start_browser(log_callback=None, use_proxy=True):
             if log_callback:
                 mode = "代理" if proxy_enabled else "直连"
                 log_callback(f"[Debug] 浏览器{mode}启动失败(第{attempt}/4次): {exc}")
-            try:
-                if browser is not None:
-                    browser.quit(del_data=True)
-            except Exception:
-                pass
+            _safe_browser_quit(browser)
             browser = None
             page = None
             browser_proxy_bridge = None
@@ -290,7 +330,8 @@ def start_browser(log_callback=None, use_proxy=True):
                 raise
             time.sleep(min(1.5 * attempt, 4))
     if _managed_proxy_mode() and is_proxy_connection_error(last_exc):
-        raise ProxyTransportError("Chromium 通过当前代理启动失败: %s" % safe_proxy_error_text(last_exc)) from last_exc
+        browser_name = "ruyiPage" if framework == "ruyipage" else "Chromium"
+        raise ProxyTransportError("%s 通过当前代理启动失败: %s" % (browser_name, safe_proxy_error_text(last_exc))) from last_exc
     from registration_flow import RecoverablePreSubmitError
     raise RecoverablePreSubmitError(
         f"浏览器启动失败，已重试4次: {last_exc}"
@@ -298,11 +339,7 @@ def start_browser(log_callback=None, use_proxy=True):
 
 def stop_browser():
     global browser, page, browser_started_with_proxy
-    if browser is not None:
-        try:
-            browser.quit(del_data=True)
-        except Exception:
-            pass
+    _safe_browser_quit(browser)
     stop_browser_proxy_bridge()
     browser = None
     page = None
@@ -344,7 +381,7 @@ def _raise_if_email_signup_unavailable():
     """Stop only when the visible xAI signup page explicitly refuses email registration."""
     try:
         text = page.run_js("return document.body ? document.body.innerText : '';")
-    except (ContextLostError, JavaScriptError, PageDisconnectedError):
+    except BROWSER_PAGE_ERRORS:
         # A page transition can briefly invalidate this read-only diagnostic.
         return
     visible = " ".join(str(text or "").lower().replace("’", "'").split())
@@ -1545,7 +1582,15 @@ return 'final-page-clicked-submit';
                     final_no_submit_state = ""
                     final_no_submit_since = None
 
-            cookies = page.cookies(all_domains=True, all_info=True) or []
+            if hasattr(page, "get_cookies"):
+                try:
+                    cookies = page.get_cookies(all_info=True) or []
+                except Exception:
+                    cookies = []
+            elif callable(getattr(page, "cookies", None)):
+                cookies = page.cookies(all_domains=True, all_info=True) or []
+            else:
+                cookies = getattr(page, "cookies", []) or []
             for item in cookies:
                 if isinstance(item, dict):
                     name = str(item.get("name", "")).strip()
@@ -1564,7 +1609,7 @@ return 'final-page-clicked-submit';
             # A completed polling iteration breaks any previous exception streak.
             consecutive_wait_errors = 0
             last_consecutive_error_message = ""
-        except PageDisconnectedError:
+        except PAGE_DISCONNECTED_ERRORS:
             consecutive_wait_errors = 0
             last_consecutive_error_message = ""
             refresh_active_page()
@@ -1573,6 +1618,33 @@ return 'final-page-clicked-submit';
         except ProxyTransportError:
             raise
         except (ContextLostError, JavaScriptError) as exc:
+            last_wait_exception = exc
+            message = f"{exc.__class__.__name__}: {exc}"
+            if message == last_consecutive_error_message:
+                consecutive_wait_errors += 1
+            else:
+                consecutive_wait_errors = 1
+                last_consecutive_error_message = message
+            if log_callback:
+                now = time.time()
+                if message != last_wait_exception_message or now - last_wait_exception_at >= 10:
+                    log_callback(f"[Debug] 等待 sso cookie 出现暂时性错误: {message}")
+                    last_wait_exception_message = message
+                    last_wait_exception_at = now
+        except (CONTEXT_LOST_ERRORS + JAVASCRIPT_ERRORS) as exc:
+            last_wait_exception = exc
+            message = f"{exc.__class__.__name__}: {exc}"
+            if message == last_consecutive_error_message:
+                consecutive_wait_errors += 1
+            else:
+                consecutive_wait_errors = 1
+                last_consecutive_error_message = message
+            if log_callback:
+                now = time.time()
+                if message != last_wait_exception_message or now - last_wait_exception_at >= 10:
+                    log_callback(f"[Debug] 等待 sso cookie 出现暂时性错误: {message}")
+                    last_wait_exception_message = message
+                    last_wait_exception_at = now
             last_wait_exception = exc
             message = f"{exc.__class__.__name__}: {exc}"
             if message == last_consecutive_error_message:

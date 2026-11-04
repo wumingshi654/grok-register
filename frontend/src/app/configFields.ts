@@ -43,6 +43,8 @@ export const configGroups: ConfigGroup[] = [
     descriptionEn: 'Batch size, execution mode and local data storage.',
     fields: [
       number('register_count', '注册数量', 'Registration count', 1, 2500),
+      select('browser_framework', '浏览器框架', 'Browser framework', ['drissionpage', 'ruyipage']),
+      text('browser_path', '浏览器路径（可选）', 'Browser path (optional)', true),
       text('database_path', 'SQLite 数据库路径', 'SQLite database path', true),
       toggle('multi_thread_enabled', '启用多线程注册', 'Enable parallel registration'),
       number('multi_thread_workers', '并行 Worker 数量', 'Parallel workers', 1, 8),

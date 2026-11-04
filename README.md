@@ -220,6 +220,15 @@ copy config.example.json config.json
 
 > `config.example.json` 是完整字段模板，其中的 `example.com`、`temp-mail.example.com` 等均为占位值，并不是可直接使用的服务地址。若使用 Cloudflare / Cloud Mail / YYDS，请先填写对应服务参数。
 
+#### 可选：浏览器自动化引擎切换（DrissionPage / ruyiPage）
+
+本项目支持通过 `browser_framework` 配置浏览器引擎：
+- `"drissionpage"`（默认）：基于 Chromium 内核。
+- `"ruyipage"`：基于 Firefox 内核与 WebDriver BiDi 协议的防检测自动化框架（开源地址: [https://gitee.com/losenine888/ruyiPage](https://gitee.com/losenine888/ruyiPage)）。若本地 Chromium 环境易触发风控/机器人检测，可切换为此引擎。
+  - 安装依赖：`pip install ruyiPage`
+  - 依赖环境：支持系统已有 Firefox，亦可运行 `python -m ruyipage install` 安装官方托管运行时。
+  - 配置选项：可在 GUI 界面“浏览器框架”下拉框直接选择，或在 `config.json` 设置 `"browser_framework": "ruyipage"`；若 Firefox 位于非标准目录，可通过 `"browser_path"` 自定义路径。
+
 ### 4. 启动
 
 GUI：

@@ -220,6 +220,15 @@ This example matches the application's default: **CPA export is enabled** (`cpa_
 
 > `config.example.json` is the complete configuration template. Values such as `example.com` and `temp-mail.example.com` are placeholders, not service addresses that can be used directly. If you use Cloudflare / Cloud Mail / YYDS, fill in the corresponding service parameters first.
 
+#### Optional: Browser Engine Selection (DrissionPage / ruyiPage)
+
+The project supports configurable browser automation engines via `browser_framework`:
+- `"drissionpage"` (default): Chromium-based engine.
+- `"ruyipage"`: Firefox-based anti-detection automation framework using WebDriver BiDi protocol ([https://gitee.com/losenine888/ruyiPage](https://gitee.com/losenine888/ruyiPage)). Useful if your environment triggers bot detection with Chromium.
+  - Install dependency: `pip install ruyiPage`
+  - Browser requirement: Uses system Firefox or run `python -m ruyipage install` to install the managed runtime.
+  - Configuration: Select in the GUI dropdown, or set `"browser_framework": "ruyipage"` in `config.json`. Custom executable paths can be specified via `"browser_path"`.
+
 ### 4. Launch
 
 GUI:

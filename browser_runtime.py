@@ -117,6 +117,8 @@ def page_has_proxy_error(page_obj):
         "err_proxy", "proxy connection failed", "proxy server",
         "proxy authentication", "tunnel connection failed",
         "无法连接到代理服务器", "代理服务器",
+        "the proxy server is refusing connections", "proxy server not found",
+        "proxy_connection_refused", "proxy_not_found", "secure connection failed",
     ))
     if failed and managed_proxy_active():
         raise ProxyTransportError("Chromium 检测到代理连接错误页面")
@@ -156,14 +158,19 @@ def apply_browser_proxy_option(options, proxy):
 
 
 def _configure_browser_environment(options):
-    browser_path = str(os.environ.get("CHROME_PATH") or "").strip()
-    if browser_path:
-        browser_path = os.path.abspath(os.path.expanduser(browser_path))
-        if not os.path.isfile(browser_path):
-            raise FileNotFoundError("CHROME_PATH does not exist: %s" % browser_path)
-        options.set_browser_path(browser_path)
+    chrome_env = str(os.environ.get("CHROME_PATH") or "").strip()
+    if chrome_env:
+        path = os.path.abspath(os.path.expanduser(chrome_env))
+        if not os.path.isfile(path):
+            raise FileNotFoundError("CHROME_PATH does not exist: %s" % path)
+        options.set_browser_path(path)
+    elif _config.get("browser_path"):
+        path = os.path.abspath(os.path.expanduser(_config.get("browser_path")))
+        if not os.path.isfile(path):
+            raise FileNotFoundError("指定的浏览器路径不存在: %s" % path)
+        options.set_browser_path(path)
 
-    if os.environ.get("GROK_REGISTER_CHROMIUM_HEADLESS") == "1":
+    if os.environ.get("GROK_REGISTER_CHROMIUM_HEADLESS") == "1" or os.environ.get("GROK_REGISTER_HEADLESS") == "1":
         options.headless(True)
     if os.environ.get("GROK_REGISTER_CHROMIUM_NO_SANDBOX") == "1":
         options.set_argument("--no-sandbox")
@@ -172,14 +179,52 @@ def _configure_browser_environment(options):
     return options
 
 
-def create_browser_options(browser_proxy="", extension_path=None):
+def create_ruyipage_options(browser_proxy="", extension_path=None):
+    from ruyipage import FirefoxOptions
+    options = FirefoxOptions()
+    options.set_auto_port()
+    options.set_timeouts(base=1)
+
+    browser_path = str(
+        _config.get("browser_path")
+        or os.environ.get("FIREFOX_PATH")
+        or os.environ.get("RUYIPAGE_BROWSER_PATH")
+        or ""
+    ).strip()
+    if browser_path:
+        browser_path = os.path.abspath(os.path.expanduser(browser_path))
+        if not os.path.exists(browser_path):
+            raise FileNotFoundError("指定的 Firefox 路径不存在: %s" % browser_path)
+        options.set_browser_path(browser_path)
+
+    if os.environ.get("GROK_REGISTER_HEADLESS") == "1" or os.environ.get("GROK_REGISTER_CHROMIUM_HEADLESS") == "1":
+        options.headless(True)
+
+    if browser_proxy:
+        options.set_proxy(browser_proxy)
+
+    if bool(_config.get("ruyipage_smart_fingerprint", False)):
+        try:
+            options.smart_fingerprint()
+        except Exception:
+            pass
+
+    return options
+
+
+def create_browser_options(browser_proxy="", extension_path=None, framework=None):
+    from app_config import get_browser_framework
+    fw = framework or get_browser_framework(_config)
+    if fw == "ruyipage":
+        return create_ruyipage_options(browser_proxy=browser_proxy, extension_path=extension_path)
+
     options = ChromiumOptions()
     options.auto_port()
     options.set_timeouts(base=1)
     _configure_browser_environment(options)
     apply_browser_proxy_option(options, browser_proxy)
     effective_extension = _resolve_extension_path(extension_path)
-    if effective_extension:
+    if effective_extension and hasattr(options, "add_extension"):
         options.add_extension(effective_extension)
     return options
 
