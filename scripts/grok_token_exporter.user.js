@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok & xAI 账号 Token 导出工具 (grok2api / grok-register)
 // @namespace    https://github.com/wumingshi654/grok-register
-// @version      1.0.0
-// @description  手工注册或登录 x.ai / grok.com 后，自动提取 SSO Token、Cookie 及账号信息，一键导出为 grok2api 本地 token.json 片段、远程导入格式或 grok-register 账号文件格式，支持直接一键推送到 grok2api 接口。
+// @version      1.1.0
+// @description  手工注册或登录 x.ai / grok.com 后，自动提取 SSO Token、Cookie 及账号信息，一键导出为 grok2api 本地 token.json 片段、远程导入格式或 grok-register 账号文件格式，支持直接一键推送到 grok2api 接口。支持 Firefox 隐私模式手动输入/粘贴与多维度 Cookie 检索。
 // @author       grok-register
 // @match        https://grok.com/*
 // @match        https://accounts.x.ai/*
@@ -30,9 +30,12 @@
         adminPassword: GM_getValue('grok2api_admin_password', ''),
     };
 
-    // 内存中捕获的表单凭据
+    // 内存中捕获的表单凭据与 SSO Token
     let capturedEmail = GM_getValue('last_captured_email', '');
     let capturedPassword = GM_getValue('last_captured_password', '');
+    let manualSSOToken = GM_getValue('last_manual_sso', '');
+    let currentSSOToken = manualSSOToken || '';
+    let currentCookies = new Map();
 
     // 监听页面输入框，自动暂存用户输入的邮箱和密码
     function listenFormInputs() {
@@ -51,40 +54,63 @@
                 if (val && val.includes('@')) {
                     capturedEmail = val;
                     GM_setValue('last_captured_email', val);
-                    updateUI();
+                    const emailInput = document.getElementById('grok-input-email');
+                    if (emailInput && !emailInput.value) emailInput.value = val;
                 }
             } else if (type === 'password' || name.includes('password') || testId.includes('password')) {
                 if (val) {
                     capturedPassword = val;
                     GM_setValue('last_captured_password', val);
-                    updateUI();
+                    const passInput = document.getElementById('grok-input-password');
+                    if (passInput && !passInput.value) passInput.value = val;
                 }
             }
         }, true);
     }
 
-    // 获取当前站点的所有 Cookie（优先使用 GM_cookie 读取 HttpOnly）
+    // 清理和标准化 SSO Token 字符串（自动去除开头的 "sso="）
+    function cleanSSOToken(raw) {
+        let token = String(raw || '').trim();
+        if (token.startsWith('sso=')) {
+            token = token.slice(4).trim();
+        }
+        if (token.startsWith('"') && token.endsWith('"')) {
+            token = token.slice(1, -1).trim();
+        }
+        return token;
+    }
+
+    // 获取当前站点的所有 Cookie（适配 Firefox 隐私模式与常规模式）
     function fetchAllCookies() {
         return new Promise((resolve) => {
             const cookieMap = new Map();
 
-            // 1. 如果支持 GM_cookie.list，则多域名遍历获取完整 Cookie (包含 HttpOnly)
+            // 1. 如果支持 GM_cookie.list，则结合 url 和 domain 进行多维度检索
             if (typeof GM_cookie !== 'undefined' && GM_cookie.list) {
-                const targetDomains = ['.x.ai', 'accounts.x.ai', 'x.ai', 'grok.com', '.grok.com'];
-                let pending = targetDomains.length;
+                const queries = [
+                    { url: window.location.href },
+                    { url: 'https://grok.com/' },
+                    { url: 'https://accounts.x.ai/' },
+                    { name: 'sso' },
+                    { name: 'sso-rw' },
+                    { domain: 'grok.com' },
+                    { domain: '.grok.com' },
+                    { domain: '.x.ai' },
+                    { domain: 'accounts.x.ai' },
+                ];
+                let pending = queries.length;
                 let settled = false;
 
                 const finish = () => {
                     if (settled) return;
                     settled = true;
-                    // 合并 document.cookie 兜底
                     mergeDocumentCookies(cookieMap);
                     resolve(cookieMap);
                 };
 
-                targetDomains.forEach((domain) => {
+                queries.forEach((q) => {
                     try {
-                        GM_cookie.list({ domain }, (cookies, error) => {
+                        GM_cookie.list(q, (cookies, error) => {
                             if (!error && Array.isArray(cookies)) {
                                 cookies.forEach((c) => {
                                     if (c && c.name && c.value) {
@@ -102,7 +128,7 @@
                 });
 
                 // 超时保护
-                setTimeout(finish, 1200);
+                setTimeout(finish, 1500);
             } else {
                 // 2. 降级模式：读取 document.cookie
                 mergeDocumentCookies(cookieMap);
@@ -174,7 +200,7 @@
             bottom: 68px;
             right: 24px;
             z-index: 999999;
-            width: 380px;
+            width: 390px;
             background: #1e1e24;
             color: #f3f4f6;
             border: 1px solid #374151;
@@ -194,16 +220,30 @@
                 <button id="grok-close-btn" style="background:none; border:none; color:#9ca3af; font-size:16px; cursor:pointer;">&times;</button>
             </div>
 
+            <!-- SSO Token 输入与展示区 -->
             <div style="margin-bottom:10px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                    <span style="color:#9ca3af; font-size:12px;">SSO Token 状态:</span>
-                    <button id="grok-refresh-cookie" style="background:none; border:none; color:#3b82f6; font-size:11px; cursor:pointer; text-decoration:underline;">刷新检测</button>
+                    <span style="color:#9ca3af; font-size:12px; font-weight:600;">SSO Token (自动检测或手动粘贴):</span>
+                    <button id="grok-refresh-cookie" style="background:none; border:none; color:#3b82f6; font-size:11px; cursor:pointer; text-decoration:underline;">🔄 重新检测</button>
                 </div>
-                <div id="grok-sso-status" style="background:#111827; border:1px solid #374151; border-radius:6px; padding:6px 10px; font-family:monospace; font-size:11px; word-break:break-all; color:#e5e7eb;">
-                    检测中...
-                </div>
+                <textarea id="grok-input-sso" rows="2" placeholder="自动检测中... 若 Firefox 隐私模式未读取，可按下方指引直接粘贴 sso 值" style="width:100%; box-sizing:border-box; background:#111827; border:1px solid #374151; border-radius:6px; color:#10b981; padding:6px 8px; font-size:11px; font-family:monospace; resize:vertical;"></textarea>
+                <div id="grok-sso-status" style="font-size:10px; margin-top:3px; color:#9ca3af;"></div>
             </div>
 
+            <!-- Firefox 隐私模式指引 (折叠提示) -->
+            <details style="background:#111827; border:1px solid #4b5563; border-radius:6px; padding:6px 10px; margin-bottom:10px;">
+                <summary style="font-size:11px; color:#f59e0b; cursor:pointer; font-weight:500;">💡 Firefox 隐私模式未检测到？查看 F12 快速获取指南</summary>
+                <div style="margin-top:6px; font-size:11px; color:#d1d5db; line-height:1.6;">
+                    由于 Firefox 隐私模式启用了严苛的动态分区保护（Dynamic State Partitioning），扩展的 Cookie 读取权限可能被沙盒隔离。你可以这样快速获取：<br>
+                    1. 键盘按 <b>F12</b>（或右键 ➜ 检查），点击顶部的 <b>“存储” (Storage)</b> 选项卡。<br>
+                    2. 左侧菜单展开 <b>Cookie</b> ➜ 点击 <b>https://grok.com</b>（或 https://accounts.x.ai）。<br>
+                    3. 在列表中找到名称为 <b>sso</b> 的行，双击其 <b>“值” (Value)</b> 进行复制。<br>
+                    4. 粘贴到上方的 SSO Token 输入框中，下方所有导出与推送功能立即生效！<br>
+                    <i>提示：确保在 Firefox 的 <code>about:addons</code> ➜ Tampermonkey 详情中勾选了“在隐私窗口中运行”。</i>
+                </div>
+            </details>
+
+            <!-- 邮箱与密码输入 -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
                 <div>
                     <label style="display:block; font-size:11px; color:#9ca3af; margin-bottom:3px;">邮箱 (Email)</label>
@@ -215,6 +255,7 @@
                 </div>
             </div>
 
+            <!-- 导出按钮区 -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:10px;">
                 <button id="grok-btn-copy-sso" style="background:#2563eb; color:#fff; border:none; border-radius:6px; padding:7px; font-size:12px; font-weight:500; cursor:pointer;">📋 复制 SSO Token</button>
                 <button id="grok-btn-copy-line" style="background:#4b5563; color:#fff; border:none; border-radius:6px; padding:7px; font-size:12px; font-weight:500; cursor:pointer;">📑 复制 账号行</button>
@@ -276,6 +317,16 @@
         document.getElementById('grok-btn-copy-cookie').onclick = copyFullCookie;
         document.getElementById('grok-btn-push').onclick = pushToGrok2api;
 
+        // 监听手动输入 SSO Token
+        const ssoTextarea = document.getElementById('grok-input-sso');
+        ssoTextarea.oninput = (e) => {
+            const cleaned = cleanSSOToken(e.target.value);
+            currentSSOToken = cleaned;
+            manualSSOToken = cleaned;
+            GM_setValue('last_manual_sso', cleaned);
+            renderSSOStatus(cleaned);
+        };
+
         // 监听手动输入
         document.getElementById('grok-input-email').oninput = (e) => {
             capturedEmail = e.target.value.trim();
@@ -305,32 +356,44 @@
         }
     }
 
-    let currentSSOToken = '';
-    let currentCookies = new Map();
+    function renderSSOStatus(token) {
+        const statusEl = document.getElementById('grok-sso-status');
+        if (!statusEl) return;
+        if (token) {
+            statusEl.innerHTML = `<span style="color:#10b981; font-weight:bold;">🟢 当前 Token 有效:</span> ${maskToken(token)}`;
+        } else {
+            statusEl.innerHTML = `<span style="color:#ef4444; font-weight:bold;">🔴 未检测到 SSO Token</span> (可在上方输入框中直接粘贴)`;
+        }
+    }
 
     async function updateUI(showFeedback = false) {
         if (!panelEl) return;
         const emailInput = document.getElementById('grok-input-email');
         const passInput = document.getElementById('grok-input-password');
-        const statusEl = document.getElementById('grok-sso-status');
+        const ssoTextarea = document.getElementById('grok-input-sso');
         const msgEl = document.getElementById('grok-msg');
 
         if (emailInput && !emailInput.value && capturedEmail) emailInput.value = capturedEmail;
         if (passInput && !passInput.value && capturedPassword) passInput.value = capturedPassword;
 
+        // 检索 Cookie
         currentCookies = await fetchAllCookies();
-        currentSSOToken = currentCookies.get('sso') || currentCookies.get('sso-rw') || '';
+        const detectedSSO = currentCookies.get('sso') || currentCookies.get('sso-rw') || '';
 
-        if (statusEl) {
-            if (currentSSOToken) {
-                statusEl.innerHTML = `<span style="color:#10b981; font-weight:bold;">🟢 已获取 SSO:</span> <span title="${currentSSOToken}">${maskToken(currentSSOToken)}</span>`;
-            } else {
-                statusEl.innerHTML = `<span style="color:#ef4444; font-weight:bold;">🔴 未检测到 SSO Cookie</span><br><span style="color:#9ca3af; font-size:10px;">提示: 请完成注册或登录后刷新。若已登录，可在浏览器 F12 Application -> Cookies 中复制 sso 值</span>`;
-            }
+        if (detectedSSO) {
+            currentSSOToken = cleanSSOToken(detectedSSO);
+            if (ssoTextarea) ssoTextarea.value = currentSSOToken;
+        } else if (manualSSOToken) {
+            currentSSOToken = manualSSOToken;
+            if (ssoTextarea && !ssoTextarea.value) ssoTextarea.value = manualSSOToken;
+        } else if (ssoTextarea && ssoTextarea.value) {
+            currentSSOToken = cleanSSOToken(ssoTextarea.value);
         }
 
+        renderSSOStatus(currentSSOToken);
+
         if (showFeedback && msgEl) {
-            msgEl.textContent = currentSSOToken ? 'Cookie 状态已刷新 (SSO 有效)' : 'Cookie 已刷新 (暂未找到 SSO)';
+            msgEl.textContent = currentSSOToken ? 'Cookie 状态已刷新 (SSO 有效)' : 'Cookie 已刷新 (未检测到 SSO，请查看下方指南)';
             setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2500);
         }
     }
@@ -353,35 +416,46 @@
         }
     }
 
+    function getActiveToken() {
+        const ssoTextarea = document.getElementById('grok-input-sso');
+        if (ssoTextarea && ssoTextarea.value.trim()) {
+            return cleanSSOToken(ssoTextarea.value);
+        }
+        return currentSSOToken;
+    }
+
     function copySSOToken() {
-        if (!currentSSOToken) {
-            notify('未检测到 SSO Token，无法复制', true);
+        const token = getActiveToken();
+        if (!token) {
+            notify('未输入或未检测到 SSO Token', true);
             return;
         }
-        GM_setClipboard(currentSSOToken);
+        GM_setClipboard(token);
         notify('✅ SSO Token 已复制到剪贴板！');
     }
 
     function copyAccountLine() {
-        if (!currentSSOToken) {
-            notify('未检测到 SSO Token，无法复制', true);
+        const token = getActiveToken();
+        if (!token) {
+            notify('未输入或未检测到 SSO Token', true);
             return;
         }
         const email = (document.getElementById('grok-input-email')?.value || capturedEmail || 'unknown@mail.com').trim();
         const pwd = (document.getElementById('grok-input-password')?.value || capturedPassword || 'Password123').trim();
-        const line = `${email}----${pwd}----${currentSSOToken}`;
+        const line = `${email}----${pwd}----${token}`;
         GM_setClipboard(line);
         notify('✅ 账号行 (email----pwd----sso) 已复制！');
     }
 
     function copyGrok2ApiJson() {
-        if (!currentSSOToken) {
-            notify('未检测到 SSO Token，无法复制', true);
+        const token = getActiveToken();
+        if (!token) {
+            notify('未输入或未检测到 SSO Token', true);
             return;
         }
         const email = (document.getElementById('grok-input-email')?.value || capturedEmail || '').trim();
         const obj = {
-            token: currentSSOToken,
+            token: token,
             tags: ["manual-register"],
             note: email
         };
@@ -391,22 +465,27 @@
     }
 
     function copyFullCookie() {
-        if (!currentCookies.size) {
+        if (!currentCookies.size && !getActiveToken()) {
             notify('当前无可用 Cookie', true);
             return;
         }
         const pairs = [];
         currentCookies.forEach((val, key) => pairs.push(`${key}=${val}`));
+        if (!currentCookies.has('sso') && getActiveToken()) {
+            pairs.push(`sso=${getActiveToken()}`);
+            pairs.push(`sso-rw=${getActiveToken()}`);
+        }
         const cookieStr = pairs.join('; ');
         GM_setClipboard(cookieStr);
-        notify(`✅ 完整 Cookie (${currentCookies.size} 项) 已复制！`);
+        notify(`✅ 完整 Cookie 已复制！`);
     }
 
     // 推送到 grok2api
     async function pushToGrok2api() {
+        const token = getActiveToken();
         const pushStatus = document.getElementById('grok-push-status');
-        if (!currentSSOToken) {
-            if (pushStatus) pushStatus.innerHTML = '<span style="color:#ef4444;">未获取到 SSO Token</span>';
+        if (!token) {
+            if (pushStatus) pushStatus.innerHTML = '<span style="color:#ef4444;">未获取或未输入 SSO Token</span>';
             return;
         }
         const base = (document.getElementById('grok-cfg-base')?.value || '').trim().replace(/\/+$/, '');
@@ -441,7 +520,7 @@
 
                 // 2. 上传 Token
                 const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
-                const fileBody = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="grok-web-sso.txt"\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${currentSSOToken}\n\r\n--${boundary}--\r\n`;
+                const fileBody = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="grok-web-sso.txt"\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${token}\n\r\n--${boundary}--\r\n`;
 
                 const importRes = await gmFetch(`${base}/api/admin/v1/accounts/web/import`, {
                     method: 'POST',
@@ -474,7 +553,7 @@
             try {
                 const remotePool = pool === 'ssoSuper' ? 'super' : 'basic';
                 const payload = {
-                    tokens: [currentSSOToken],
+                    tokens: [token],
                     pool: remotePool,
                     tags: ["manual-register", email].filter(Boolean)
                 };
@@ -488,7 +567,6 @@
                     notify('🎉 成功写入旧版 grok2api 远端池！');
                     return;
                 }
-                // 尝试 /admin/api/tokens/add
                 const addRes2 = await gmFetch(`${base}/admin/api/tokens/add?app_key=${encodeURIComponent(appKey)}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
