@@ -602,6 +602,21 @@ ss://...
 
 两套远端凭据不能同时填写。新版管理员账号/密码模式对非本机地址强制要求 HTTPS；`localhost` / `127.0.0.1` / `::1` 可以使用 HTTP。旧版 `app_key` 兼容接口当前接受 HTTP/HTTPS，但远程部署仍建议使用 HTTPS。
 
+### 手工注册辅助脚本（油猴 Userscript）
+
+当环境遭遇高强度 Cloudflare 风控拦截时，可在常规浏览器中手动完成注册，并使用项目提供的油猴脚本自动提取并导出 Token：
+
+- **脚本路径**：[`scripts/grok_token_exporter.user.js`](file:///root/project/grok/grok-register/scripts/grok_token_exporter.user.js)
+- **支持功能**：
+  - 自动读取包括 `HttpOnly` 在内的 `sso`、`sso-rw` 与 `cf_clearance` Cookie。
+  - 自动暂存注册填写的邮箱和密码。
+  - **一键复制**：纯 SSO Token、`email----password----sso` 账号行、`grok2api` 本地 `token.json` 片段。
+  - **一键直推**：支持配置本地或远端 `grok2api` 接口（支持新版账号密码鉴权与旧版 App Key），点击即可直接入池。
+- **安装与使用方式**：
+  1. 浏览器安装 Tampermonkey（篡改猴）或 Violentmonkey（暴力猴）插件。
+  2. 新建用户脚本，将 [`scripts/grok_token_exporter.user.js`](file:///root/project/grok/grok-register/scripts/grok_token_exporter.user.js) 的内容全部粘贴并保存。
+  3. 打开 `https://accounts.x.ai/sign-up` 或 `https://grok.com/`，页面右下角会出现 `🤖 Grok 导出` 悬浮按钮，完成注册或登录后点击即可一键导出。
+
 ## CPA / xAI OIDC 导出
 
 **默认开启**，但属于注册成功后的独立 OAuth 后处理，可能延长单个 worker 的运行时间。不需要时设置 `cpa_export_enabled=false`。

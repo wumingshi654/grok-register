@@ -606,6 +606,21 @@ Remote mode supports two credential methods; choose one:
 
 The two remote credential methods cannot be configured at the same time. The newer admin username/password mode requires HTTPS for non-local addresses; `localhost` / `127.0.0.1` / `::1` may use HTTP. The legacy `app_key` compatibility endpoint currently accepts HTTP/HTTPS, although HTTPS is still recommended for remote deployments.
 
+### Manual Registration Userscript (Tampermonkey)
+
+If automated registration triggers strict Cloudflare bot detection in your environment, you can register manually in a regular browser and use our Userscript to extract and export tokens:
+
+- **Script Path**: [`scripts/grok_token_exporter.user.js`](file:///root/project/grok/grok-register/scripts/grok_token_exporter.user.js)
+- **Features**:
+  - Automatically retrieves `sso`, `sso-rw`, and `cf_clearance` cookies (including `HttpOnly`).
+  - Automatically captures email and password during registration.
+  - **One-click Copy**: Raw SSO Token, `email----password----sso` account line, or `grok2api` `token.json` snippet.
+  - **Direct Push**: Optionally configure local or remote `grok2api` API to push tokens directly into the pool.
+- **How to Use**:
+  1. Install Tampermonkey or Violentmonkey extension in your browser.
+  2. Create a new script, paste the contents of [`scripts/grok_token_exporter.user.js`](file:///root/project/grok/grok-register/scripts/grok_token_exporter.user.js), and save.
+  3. Navigate to `https://accounts.x.ai/sign-up` or `https://grok.com/`. An `🤖 Grok Export` button will appear in the bottom-right corner. Click it to export tokens after registering/logging in.
+
 ## CPA / xAI OIDC Export
 
 **Enabled by default.** This is a separate OAuth post-processing step after registration that can extend the worker's runtime. Set `cpa_export_enabled=false` if you do not need it.
